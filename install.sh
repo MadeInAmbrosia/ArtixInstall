@@ -3,32 +3,39 @@ set -euo pipefail
 
 MODE="auto"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $# -eq 0 ]]; then
+    MODE="auto"
+fi
+
 for arg in "$@"; do
     case "$arg" in
+    -a | --auto)
+        MODE="auto"
+        ;;
     -m | --manual)
         MODE="manual"
         ;;
-    -h | --help)
-        echo "Usage:"
-        echo "  ./install        # auto install"
-        echo "  ./install -m     # manual install"
-        exit 0
+    *)
+        echo "[ERROR] Unknown option: $arg"
+        echo "Usage: ./install [-a|--auto] [-m|--manual]"
+        exit 1
         ;;
     esac
 done
 
 if [[ "$MODE" == "manual" ]]; then
-    if [[ ! -f "./scripts/install_manual.sh" ]]; then
+    [[ -f "$SCRIPT_DIR/scripts/install_manual.sh" ]] || {
         echo "[ERROR] install_manual.sh not found"
         exit 1
-    fi
+    }
+    exec bash "$SCRIPT_DIR/scripts/install_manual.sh"
 
-    exec bash ./scripts/install_manual.sh
 else
-    if [[ ! -f "./scripts/install_auto.sh" ]]; then
+    [[ -f "$SCRIPT_DIR/scripts/install_auto.sh" ]] || {
         echo "[ERROR] install_auto.sh not found"
         exit 1
-    fi
-
-    exec bash ./scripts/install_auto.sh
+    }
+    exec bash "$SCRIPT_DIR/scripts/install_auto.sh"
 fi
