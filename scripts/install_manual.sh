@@ -123,22 +123,6 @@ detect_mounted() {
     fi
 }
 
-select_disk() {
-    echo "[0] Available disks:"
-    hr
-    lsblk -dpno NAME,SIZE,MODEL | grep -E "/dev/(sd|vd|nvme)"
-    hr
-
-    read -rp "Enter target disk (e.g. /dev/vda): " DISK
-
-    if [[ ! -b "$DISK" ]]; then
-        echo "[ERROR] Invalid disk."
-        exit 1
-    fi
-
-    echo "[✓] Selected disk: $DISK"
-}
-
 #################
 # BASE INSTALL
 #################
