@@ -1,108 +1,72 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
-LOCALE="en_US.UTF-8"
-TIMEZONE="Europe/Berlin"
-H_NAME="artix"
 ROOTPASS=""
-INIT_SYS=""
+INIT=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 
 check_uefi() {
-    [[ ! -d /sys/firmware/efi ]] && { echo "[ERROR] UEFI required."; exit 1; }
+    [[ ! -d /sys/firmware/efi ]] && exit 1
 }
 
-detect_live_init() {
-    if [ -f /run/runit/runsvdir/current ]; then INIT_SYS="runit"
-    elif [ -d /run/openrc ]; then INIT_SYS="openrc"
-    elif [ -d /run/dinit ]; then INIT_SYS="dinit"
-    elif [ -f /run/s6/services ]; then INIT_SYS="s6"
-    else INIT_SYS="openrc"; fi
-    echo "[*] Detected live init: $INIT_SYS"
+choose_init() {
+    echo "1) openrc  2) runit  3) dinit  4) s6"
+    read -rp "Init: " ic
+    case "$ic" in
+        1) INIT="openrc" ;;
+        2) INIT="runit" ;;
+        3) INIT="dinit" ;;
+        4) INIT="s6" ;;
+        *) INIT="openrc" ;;
+    esac
 }
 
 verify_mounts() {
-    echo "[*] Verifying manual mount points..."
-    if ! findmnt /mnt >/dev/null; then
-        echo "[ERROR] Nothing mounted on /mnt. Please mount your Root partition."
+    if ! findmnt /mnt >/dev/null || ! findmnt /mnt/boot/efi >/dev/null; then
         exit 1
     fi
-    if ! findmnt /mnt/boot/efi >/dev/null; then
-        echo "[ERROR] Nothing mounted on /mnt/boot/efi. Please mount your EFI partition."
-        exit 1
-    fi
-    echo "[✓] Mount points verified."
 }
 
 run_basestrap() {
-    echo "[*] Running basestrap (Minimal core only)..."
     local ucode="amd-ucode"
     grep -q "GenuineIntel" /proc/cpuinfo && ucode="intel-ucode"
     basestrap /mnt base base-devel linux linux-firmware "$ucode" \
-        "$INIT_SYS" elogind-"$INIT_SYS" grub efibootmgr os-prober \
-        dhcpcd dhcpcd-"$INIT_SYS" iwd iwd-"$INIT_SYS" nano artix-archlinux-support
+        "$INIT" elogind-"$INIT" grub efibootmgr os-prober \
+        dhcpcd dhcpcd-"$INIT" iwd iwd-$INIT nano artix-archlinux-support
 }
 
-configure_base_system() {
-    echo "[*] Generating fstab..."
+finalize_base() {
     fstabgen -U /mnt >> /mnt/etc/fstab
-
-    echo "[*] Entering chroot for minimal setup..."
     artix-chroot /mnt /bin/bash <<EOF
-# Localization & Time
-ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
-hwclock --systohc
-echo "$LOCALE UTF-8" >> /etc/locale.gen && locale-gen
-echo "LANG=$LOCALE" > /etc/locale.conf
-echo "$H_NAME" > /etc/hostname
-
-# Root Auth
-echo "root:$ROOTPASS" | chpasswd
-
-# Bootloader setup
 echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ARTIX --recheck --removable
 grub-mkconfig -o /boot/grub/grub.cfg
-
-# Pacman Optimization
+echo "root:$ROOTPASS" | chpasswd
 sed -i 's/#ParallelDownloads = 5/ParallelDownloads = 10/' /etc/pacman.conf
-
-# Essential Networking
-case "$INIT_SYS" in
+case "$INIT" in
     openrc) rc-update add dhcpcd default; rc-update add iwd default ;;
     runit)  ln -s /etc/runit/sv/dhcpcd /etc/runit/runsvdir/default/; ln -s /etc/runit/sv/iwd /etc/runit/runsvdir/default/ ;;
     dinit)  mkdir -p /etc/dinit.d/boot.d; ln -s ../dhcpcd /etc/dinit.d/boot.d/; ln -s ../iwd /etc/dinit.d/boot.d/ ;;
-    s6)     s6-rc-bundle-update add default dhcpcd; s6-rc-bundle-update add default iwd ;;
 esac
 EOF
 }
 
-copy_scripts() {
-    echo "[*] Deploying post-install wizard..."
+setup_handoff() {
     if [ -f "$SCRIPT_DIR/../firstboot.sh" ]; then
         install -Dm755 "$SCRIPT_DIR/../firstboot.sh" /mnt/usr/local/bin/firstboot.sh
         install -Dm755 "$SCRIPT_DIR/../firstboot_trigger.sh" /mnt/etc/profile.d/firstboot.sh
-    elif [ -f "$SCRIPT_DIR/firstboot.sh" ]; then
-        install -Dm755 "$SCRIPT_DIR/firstboot.sh" /mnt/usr/local/bin/firstboot.sh
-        install -Dm755 "$SCRIPT_DIR/firstboot_trigger.sh" /mnt/etc/profile.d/firstboot.sh
-    else
-        echo "[WARNING] Post-install scripts not found! Wizard skipped."
     fi
 }
 
 main() {
     check_uefi
-    detect_live_init
+    choose_init
     verify_mounts
-    
-    read -rsp "Set temporary root password: " ROOTPASS; echo
-
+    read -rsp "Root password: " ROOTPASS; echo
     run_basestrap
-    configure_base_system
-    copy_scripts
-
+    finalize_base
+    setup_handoff
     umount -R /mnt
-    echo "[✓] MANUAL INSTALLATION COMPLETE! Reboot and log in to start the setup wizard."
+     echo "[✓] Core installation finished. Reboot to launch the wizard."
 }
-
 main
