@@ -17,6 +17,17 @@ setup_networking() {
     fi
 }
 
+create_user() {
+    read -rp "Username: " un
+    read -rp "Shell: 1) Bash 2) Zsh: " shc
+    local ush="/bin/bash"
+    [[ "$shc" == "2" ]] && { pacman -S --noconfirm zsh; ush="/bin/zsh"; }
+    useradd -m -G wheel,audio,video,storage,input -s "$ush" "$un"
+    passwd "$un"
+    pacman -S --noconfirm sudo
+    sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+}
+
 install_drivers() {
     local pkgs=""
     if lspci | grep -qi "nvidia"; then pkgs="nvidia-dkms nvidia-utils"
@@ -52,6 +63,7 @@ setup_desktop() {
     esac
 
     if [[ "$dc" =~ ^(2|3)$ ]]; then
+        echo "WARNING: SDDM is RedHat-code reliant. LightDM is agnostic."
         read -rp "1) LightDM 2) SDDM: " dmc
         [[ "$dmc" == "2" ]] && dm="sddm"
     fi
@@ -68,7 +80,7 @@ setup_desktop() {
 }
 
 enable_arch_repos() {
-    read -rp "Enable Arch Repos (risky)? (y/N): " ar
+    read -rp "Enable Arch Repos? (y/N): " ar
     if [[ "$ar" =~ ^([yY])$ ]]; then
         pacman -S --noconfirm artix-archlinux-support
         artix-config-n-install
@@ -104,28 +116,6 @@ install_bonus_tools() {
     fi
 }
 
-setup_swap() {
-    read -rp "Create Swap File? (y/N): " sc
-    if [[ "$sc" =~ ^([yY])$ ]]; then
-        local ram=$(free -m | awk '/^Mem:/{print $2}')
-        dd if=/dev/zero of=/swapfile bs=1M count=$((ram * 2)) status=progress
-        chmod 600 /swapfile && mkswap /swapfile
-        echo "/swapfile none swap defaults 0 0" >> /etc/fstab
-        swapon /swapfile
-    fi
-}
-
-create_user() {
-    read -rp "Username: " un
-    read -rp "Shell: 1) Bash 2) Zsh: " shc
-    local ush="/bin/bash"
-    [[ "$shc" == "2" ]] && { pacman -S --noconfirm zsh; ush="/bin/zsh"; }
-    useradd -m -G wheel,audio,video,storage,input -s "$ush" "$un"
-    passwd "$un"
-    pacman -S --noconfirm sudo
-    sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
-}
-
 cleanup() {
     touch /var/lib/artix-firstboot-done
     rm -f /etc/profile.d/firstboot.sh
@@ -139,7 +129,6 @@ main() {
     setup_desktop
     enable_arch_repos
     install_bonus_tools
-    setup_swap
     cleanup
 }
 
