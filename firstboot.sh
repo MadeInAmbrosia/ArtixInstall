@@ -89,14 +89,45 @@ install_drivers() {
     echo "--- Hardware Drivers ---"
     read -rp "Install detected hardware drivers? (y/N): " drv_ans
     [[ ! "$drv_ans" =~ ^([yY])$ ]] && return 0
-    local pkgs=""
-    if lspci | grep -qi "nvidia"; then pkgs="nvidia-dkms nvidia-utils"
-    elif lspci | grep -qi "intel"; then pkgs="xf86-video-intel"
-    elif lspci | grep -qi "amd"; then pkgs="xf86-video-amdgpu"; fi
+
+    echo "1) Standard X.Org (Proprietary) 2) xLibre (Open-source)"
+    read -rp "Driver preference: " drv_pref
+    
+    local pkgs=()
+    local gpu_info=$(lspci)
+
+    if echo "$gpu_info" | grep -qi "nvidia"; then
+        if [[ "$drv_pref" == "2" ]]; then
+            pkgs+=("xlibre-video-nouveau")
+        else
+            pkgs+=("nvidia-dkms" "nvidia-utils")
+        fi
+    fi
+
+    if echo "$gpu_info" | grep -qi "intel"; then
+        if [[ "$drv_pref" == "2" ]]; then
+            pkgs+=("xlibre-video-intel")
+        else
+            pkgs+=("xf86-video-intel" "intel-media-driver")
+        fi
+    fi
+
+    if echo "$gpu_info" | grep -qi "amd"; then
+        if [[ "$drv_pref" == "2" ]]; then
+            pkgs+=("xlibre-video-amdgpu" "vulkan-radeon")
+        else
+            pkgs+=("xf86-video-amdgpu" "vulkan-radeon")
+        fi
+    fi
+
     local virt=$(systemd-detect-virt || echo "none")
-    [[ "$virt" == "oracle" ]] && pkgs="$pkgs virtualbox-guest-utils-$INIT"
-    [[ -n "$pkgs" ]] && pacman -S --noconfirm $pkgs
+    [[ "$virt" == "oracle" ]] && pkgs+=("virtualbox-guest-utils-$INIT")
+
+    if [[ ${#pkgs[@]} -gt 0 ]]; then
+        pacman -S --noconfirm "${pkgs[@]}"
+    fi
 }
+
 
 enable_arch_repos() {
     echo "--- Arch Repositories ---"
@@ -192,10 +223,9 @@ main() {
         touch /var/lib/artix-firstboot-done
         rm -f /etc/profile.d/firstboot.sh
         echo "[✓] Cleanup complete. Enjoy your system!"
-        echo "To apply everything, you should reboot (Script is located at /usr/local/bin/firstboot.sh)."
+        echo "To apply everything, you should reboot."
     else
         echo "[!] Wizard kept. You can run it again by logging in as root."
-        echo "Files are located on /etc/profile.d/firstboot.sh and /usr/local/bin/firstboot.sh!"
         echo "To apply everything, you should reboot."
     fi
 }
