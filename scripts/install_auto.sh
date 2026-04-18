@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-WITH_HOME="n"
 EFI_SIZE="1024"
 DISK=""
 ROOTPASS=""
@@ -9,7 +8,10 @@ INIT=""
 REMOVABLE_FLAG=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 
-hr() { echo "--------------------------------------------------------"; }
+ensure_tools() {
+    echo "[*] Installing partitioning tools..."
+    pacman -Sy --noconfirm gptfdisk util-linux
+}
 
 choose_init() {
     echo "1) openrc  2) runit  3) dinit  4) s6"
@@ -30,7 +32,11 @@ ask_info() {
     read -rsp "Root password: " ROOTPASS; echo
     
     read -rp "Installing to an external/removable drive? (y/N): " rem
-    [[ "$rem" =~ ^([yY])$ ]] && REMOVABLE_FLAG="--removable"
+    if [[ "$rem" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        REMOVABLE_FLAG="--removable"
+    else
+        REMOVABLE_FLAG=""
+    fi
 }
 
 partition_storage() {
@@ -54,7 +60,6 @@ partition_storage() {
 run_basestrap() {
     local ucode="amd-ucode"
     grep -q "GenuineIntel" /proc/cpuinfo && ucode="intel-ucode"
-    # ONLY MINIMAL PACKAGES AS DEFINED ORIGINALLY
     basestrap /mnt base base-devel linux linux-firmware "$ucode" \
         "$INIT" elogind-$INIT grub efibootmgr os-prober \
         dhcpcd dhcpcd-$INIT iwd iwd-$INIT nano
@@ -79,10 +84,14 @@ setup_handoff() {
     if [ -f "$SCRIPT_DIR/../firstboot.sh" ]; then
         install -Dm755 "$SCRIPT_DIR/../firstboot.sh" /mnt/usr/local/bin/firstboot.sh
         install -Dm755 "$SCRIPT_DIR/../firstboot_trigger.sh" /mnt/etc/profile.d/firstboot.sh
+    elif [ -f "$SCRIPT_DIR/firstboot.sh" ]; then
+        install -Dm755 "$SCRIPT_DIR/firstboot.sh" /mnt/usr/local/bin/firstboot.sh
+        install -Dm755 "$SCRIPT_DIR/firstboot_trigger.sh" /mnt/etc/profile.d/firstboot.sh
     fi
 }
 
 main() {
+    ensure_tools
     choose_init
     ask_info
     partition_storage
@@ -92,3 +101,4 @@ main() {
     umount -R /mnt
 }
 main
+
