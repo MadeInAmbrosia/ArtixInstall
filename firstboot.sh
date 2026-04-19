@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -o pipefail
-
 INIT="openrc"
 [[ -d /run/runit ]] && INIT="runit"
 [[ -d /run/dinit ]] && INIT="dinit"
@@ -27,22 +25,22 @@ enable_arch_repos() {
         echo "[✓] Already configured."
         return 0
     fi
-
     read -rp "Enable Arch Repos? (Required for LXQt/LXDE/Drivers) (y/N): " ar
     if [[ "$ar" =~ ^([yY])$ ]]; then
         pacman -Sy --noconfirm artix-archlinux-support
         hash -r
         if command -v artix-config-n-install &>/dev/null; then
             artix-config-n-install
+            pacman-key --populate archlinux
+            pacman -Sy
         else
-            /usr/bin/artix-config-n-install
+            /usr/bin/artix-config-n-install && pacman-key --populate archlinux && pacman -Sy
         fi
-        pacman-key --populate archlinux
-        pacman -Sy
     else
         echo "[!] Skipping Arch repos. Some DEs or drivers might fail to install."
     fi
 }
+
 create_user() {
     echo "--- User Setup ---"
     read -rp "Username: " un
@@ -127,11 +125,6 @@ install_drivers() {
     local pkgs=()
     local gpu_info=$(lspci)
 
-    if grep -iq "oracle" /sys/class/dmi/id/sys_vendor 2>/dev/null || grep -iq "virtualbox" /proc/cpuinfo; then
-        echo "[i] VirtualBox detected."
-        pkgs+=("virtualbox-guest-utils-$INIT" "xf86-video-vmware")
-    fi
-
     if echo "$gpu_info" | grep -qi "nvidia"; then
         if [[ "$drv_pref" == "2" ]]; then
             pkgs+=("xlibre-video-nouveau")
@@ -156,8 +149,14 @@ install_drivers() {
         fi
     fi
 
+    if grep -iq "oracle" /sys/class/dmi/id/sys_vendor 2>/dev/null || grep -iq "virtualbox" /proc/cpuinfo; then
+        echo "[i] VirtualBox detected. Installing guest utils..."
+        pacman -S --noconfirm virtualbox-guest-utils xf86-video-vmware
+        pacman -S --noconfirm virtualbox-guest-utils-$INIT 2>/dev/null || echo "[!] No specific init service found for $INIT, using base utils."
+    fi
+
     if [[ ${#pkgs[@]} -gt 0 ]]; then
-        pacman -S --noconfirm "${pkgs[@]}"
+        pacman -S --noconfirm "${pkgs[@]}" || true
     fi
 }
 
