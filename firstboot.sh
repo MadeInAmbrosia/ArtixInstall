@@ -60,6 +60,39 @@ create_user() {
     fi
 }
 
+install_drivers() {
+    echo "--- Hardware Drivers ---"
+    read -rp "Install hardware drivers? (y/N): " drv_ans
+    if [[ "$drv_ans" =~ ^([yY])$ ]]; then
+        echo "1) Standard X.Org 2) xLibre (Conflicting packages will be replaced)"
+        read -rp "Driver preference: " drv_pref
+        local pkgs=()
+        local gpu_info=$(lspci)
+        if echo "$gpu_info" | grep -qi "nvidia"; then
+            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-nouveau"); else pkgs+=("nvidia-dkms" "nvidia-utils"); fi
+        fi
+        if echo "$gpu_info" | grep -qi "intel"; then
+            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-intel"); else pkgs+=("xf86-video-intel" "intel-media-driver"); fi
+        fi
+        if echo "$gpu_info" | grep -qi "amd"; then
+            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-amdgpu" "vulkan-radeon"); else pkgs+=("xf86-video-amdgpu" "vulkan-radeon"); fi
+        fi
+        if grep -iq "oracle" /sys/class/dmi/id/sys_vendor 2>/dev/null || grep -iq "virtualbox" /proc/cpuinfo; then
+            echo "[i] VirtualBox detected."
+            pacman -S --noconfirm --needed virtualbox-guest-utils xf86-video-vmware
+            pacman -S --noconfirm virtualbox-guest-utils-$INIT 2>/dev/null || true
+        fi
+        if [[ ${#pkgs[@]} -gt 0 ]]; then
+            if [[ "$drv_pref" == "2" ]]; then
+                echo "[!] xLibre selected. Replacing conflicting X.Org packages..."
+                yes | pacman -S --needed "${pkgs[@]}"
+            else
+                pacman -S --noconfirm --needed "${pkgs[@]}" || true
+            fi
+        fi
+    fi
+}
+
 setup_audio() {
     echo "--- Audio Setup ---"
     local needs_audio=true
@@ -113,47 +146,14 @@ setup_desktop() {
     fi
 }
 
-install_drivers() {
-    echo "--- Hardware Drivers ---"
-    read -rp "Install hardware drivers? (y/N): " drv_ans
-    if [[ "$drv_ans" =~ ^([yY])$ ]]; then
-        echo "1) Standard X.Org 2) xLibre (Conflicting packages will be replaced)"
-        read -rp "Driver preference: " drv_pref
-        local pkgs=()
-        local gpu_info=$(lspci)
-        if echo "$gpu_info" | grep -qi "nvidia"; then
-            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-nouveau"); else pkgs+=("nvidia-dkms" "nvidia-utils"); fi
-        fi
-        if echo "$gpu_info" | grep -qi "intel"; then
-            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-intel"); else pkgs+=("xf86-video-intel" "intel-media-driver"); fi
-        fi
-        if echo "$gpu_info" | grep -qi "amd"; then
-            if [[ "$drv_pref" == "2" ]]; then pkgs+=("xlibre-video-amdgpu" "vulkan-radeon"); else pkgs+=("xf86-video-amdgpu" "vulkan-radeon"); fi
-        fi
-        if grep -iq "oracle" /sys/class/dmi/id/sys_vendor 2>/dev/null || grep -iq "virtualbox" /proc/cpuinfo; then
-            pacman -S --noconfirm virtualbox-guest-utils xf86-video-vmware
-            pacman -S --noconfirm virtualbox-guest-utils-$INIT 2>/dev/null || true
-        fi
-        if [[ ${#pkgs[@]} -gt 0 ]]; then
-            if [[ "$drv_pref" == "2" ]]; then
-                pacman -S --noconfirm --needed "${pkgs[@]}" || pacman -S --noconfirm --nodeps "${pkgs[@]}"
-            else
-                pacman -S --noconfirm --needed "${pkgs[@]}" || true
-            fi
-        fi
-    fi
-}
-
 install_bonus_tools() {
     echo "--- Bonus Tools ---"
     read -rp "Enter Extras Menu? (y/N): " bt_menu
     if [[ "$bt_menu" =~ ^([yY])$ ]]; then
         read -rp "Install Git & Base-Devel? (y/N): " i_git
         [[ "$i_git" =~ ^([yY])$ ]] && pacman -S --noconfirm git base-devel
-
         read -rp "Install Codecs? (y/N): " i_cod
         [[ "$i_cod" =~ ^([yY])$ ]] && pacman -S --noconfirm gst-plugins-good gst-libav
-
         read -rp "Install UFW? (y/N): " i_ufw
         if [[ "$i_ufw" =~ ^([yY])$ ]]; then
             pacman -S --noconfirm ufw ufw-$INIT
@@ -163,7 +163,6 @@ install_bonus_tools() {
                 dinit)  ln -s ../ufw /etc/dinit.d/boot.d/ 2>/dev/null || true ;;
             esac
         fi
-
         read -rp "Install Bluetooth? (y/N): " i_bt
         if [[ "$i_bt" =~ ^([yY])$ ]]; then
             pacman -S --noconfirm bluez bluez-$INIT
@@ -173,13 +172,10 @@ install_bonus_tools() {
                 dinit)  ln -s ../bluetooth /etc/dinit.d/boot.d/ 2>/dev/null || true ;;
             esac
         fi
-
         read -rp "Install Flatpak? (y/N): " i_fp
         [[ "$i_fp" =~ ^([yY])$ ]] && pacman -S --noconfirm flatpak
-
         read -rp "Install Zram? (y/N): " i_zr
         [[ "$i_zr" =~ ^([yY])$ ]] && { pacman -S --noconfirm zramen-$INIT 2>/dev/null || pacman -S --noconfirm zram-tools 2>/dev/null || true; }
-
         if [[ "$INIT" == "runit" ]]; then
             read -rp "Install SashexSRB's rsvc? (WARNING: Pulls git & base-devel!) (https://github.com/SashexSRB/rsvc) (y/N): " i_rv
             if [[ "$i_rv" =~ ^([yY])$ ]]; then
@@ -189,7 +185,6 @@ install_bonus_tools() {
                 }
             fi
         fi
-
         read -rp "Install fastfetch? (y/N): " i_ff
         [[ "$i_ff" =~ ^([yY])$ ]] && pacman -S --noconfirm fastfetch
     fi
@@ -202,9 +197,9 @@ main() {
     setup_networking
     enable_arch_repos
     create_user
+    install_drivers
     setup_audio
     setup_desktop
-    install_drivers
     install_bonus_tools
     echo "--- Finalize ---"
     read -rp "All done. Remove wizard? (y/N): " final
