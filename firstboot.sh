@@ -84,8 +84,9 @@ install_drivers() {
         fi
         if [[ ${#pkgs[@]} -gt 0 ]]; then
             if [[ "$drv_pref" == "2" ]]; then
-                echo "[!] xLibre selected. Replacing conflicting X.Org packages..."
-                yes | pacman -S --needed "${pkgs[@]}"
+                echo "[!] xLibre selected. Forcing replacement and breaking dependencies..."
+                pacman -Rdd --noconfirm xorg-server 2>/dev/null || true
+                pacman -S --noconfirm --needed "${pkgs[@]}"
             else
                 pacman -S --noconfirm --needed "${pkgs[@]}" || true
             fi
