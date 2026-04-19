@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -o pipefail
+
 INIT="openrc"
 [[ -d /run/runit ]] && INIT="runit"
 [[ -d /run/dinit ]] && INIT="dinit"
@@ -17,6 +19,23 @@ setup_networking() {
     esac
     sleep 2
     iwctl
+}
+
+enable_arch_repos() {
+    echo "--- Arch Repositories ---"
+    if grep -q "^\[extra\]" /etc/pacman.conf; then
+        echo "[✓] Already configured."
+        return 0
+    fi
+    pacman -Sy --noconfirm artix-archlinux-support
+    hash -r
+    if command -v artix-config-n-install &>/dev/null; then
+        artix-config-n-install
+    else
+        /usr/bin/artix-config-n-install
+    fi
+    pacman-key --populate archlinux
+    pacman -Sy
 }
 
 create_user() {
@@ -60,6 +79,7 @@ setup_desktop() {
         [[ ! "$rd" =~ ^([yY])$ ]] && return 0
     fi
     echo "1) XFCE4 2) LXQt 3) LXDE 4) None"
+    echo "Note: Arch repositories will be used for LXQt/LXDE dependencies."
     read -rp "DE: " dc
     local pkgs=""
     local dm=""
@@ -96,6 +116,11 @@ install_drivers() {
     local pkgs=()
     local gpu_info=$(lspci)
 
+    if grep -iq "oracle" /sys/class/dmi/id/sys_vendor 2>/dev/null || grep -iq "virtualbox" /proc/cpuinfo; then
+        echo "[i] VirtualBox detected."
+        pkgs+=("virtualbox-guest-utils-$INIT" "xf86-video-vmware")
+    fi
+
     if echo "$gpu_info" | grep -qi "nvidia"; then
         if [[ "$drv_pref" == "2" ]]; then
             pkgs+=("xlibre-video-nouveau")
@@ -120,32 +145,8 @@ install_drivers() {
         fi
     fi
 
-    local virt=$(systemd-detect-virt || echo "none")
-    [[ "$virt" == "oracle" ]] && pkgs+=("virtualbox-guest-utils-$INIT")
-
     if [[ ${#pkgs[@]} -gt 0 ]]; then
         pacman -S --noconfirm "${pkgs[@]}"
-    fi
-}
-
-
-enable_arch_repos() {
-    echo "--- Arch Repositories ---"
-    if grep -q "^\[extra\]" /etc/pacman.conf; then
-        echo "[✓] Already configured."
-        return 0
-    fi
-    read -rp "Enable Arch Repos? (y/N): " ar
-    if [[ "$ar" =~ ^([yY])$ ]]; then
-        pacman -Sy --noconfirm artix-archlinux-support
-        hash -r
-        if command -v artix-config-n-install &>/dev/null; then
-            artix-config-n-install
-            pacman-key --populate archlinux
-            pacman -Sy
-        else
-            /usr/bin/artix-config-n-install && pacman-key --populate archlinux && pacman -Sy
-        fi
     fi
 }
 
@@ -203,7 +204,7 @@ install_bonus_tools() {
     fi
 
     read -rp "Install fastfetch? (y/N): " i_ff
-      [[ "$i_ff" =~ ^([yY])$ ]] && pacman -S --noconfirm fastfetch
+    [[ "$i_ff" =~ ^([yY])$ ]] && pacman -S --noconfirm fastfetch
 }
 
 main() {
@@ -211,11 +212,11 @@ main() {
     echo "   ARTIX POST-INSTALL SCRIPT           "
     echo "======================================="
     setup_networking
+    enable_arch_repos
     create_user
     setup_audio
     setup_desktop
     install_drivers
-    enable_arch_repos
     install_bonus_tools
     echo "--- Finalize ---"
     read -rp "All done. Remove wizard from startup? (y/N): " final
