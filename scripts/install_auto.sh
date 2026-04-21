@@ -74,7 +74,7 @@ function _setup_encryption {
 }
 
 function _ask_info {
-    lsblk -dpno NAME,SIZE,MODEL | grep -E "/dev/(sd|vd|nvme)";
+    lsblk -dpno NAME,SIZE,MODEL | grep -E "/dev/(sd|vd|nvme|mmcblk)" || true
     printf "Target Disk: "; read -r DISK;
     [[ ! -b "${DISK}" ]] && _error_exit "invalid device";
     if ! _ask "Destroy all data on ${DISK}?" "n"; then _error_exit "aborted"; fi
