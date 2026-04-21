@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail;
+exec </dev/tty;
 
 ROOTPASS="";
 INIT="";
@@ -8,8 +9,7 @@ REMOVABLE_FLAG="";
 MAPPER_NAME="cryptroot";
 IS_BTRFS=1;
 
-SELF_PATH="${BASH_SOURCE}";
-[[ "${SELF_PATH}" != /* ]] && SELF_PATH="${PWD}/${SELF_PATH}";
+SELF_PATH="$(readlink -f "${BASH_SOURCE}")";
 SCRIPT_DIR="${SELF_PATH%/*}";
 
 function _error_exit {
@@ -50,14 +50,21 @@ function _choose_init {
 }
 
 function _choose_bootloader {
-    printf "1) GRUB (Standard)  2) rEFInd (Graphical/Auto-detect)\n";
-    printf "Bootloader: "; read -r bc;
-    [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub";
+    local root_dev;
+    read -r root_dev < <(findmnt -no SOURCE /mnt);
+    if [[ "${root_dev}" == /dev/mapper/* ]]; then
+        printf "[!] LUKS detected: Forcing GRUB.\n";
+        BOOTLOADER="grub";
+    else
+        printf "1) GRUB (Standard)  2) rEFInd (Graphical)\n";
+        printf "Bootloader: "; read -r bc;
+        [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub";
+    fi
 }
 
 function _ask_info {
     printf "Root password: "; read -rs ROOTPASS; echo;
-    _ask "Installing to a removable/external drive?" "n" && REMOVABLE_FLAG="--removable";
+    if _ask "Installing to a removable/external drive?" "n"; then REMOVABLE_FLAG="--removable"; fi
 }
 
 function _detect_storage_stack {
@@ -70,15 +77,11 @@ function _run_basestrap {
     local ucode="amd-ucode";
     [[ -f /proc/cpuinfo ]] && grep -q "GenuineIntel" /proc/cpuinfo && ucode="intel-ucode";
     local pkgs=("base" "base-devel" "linux" "linux-firmware" "${ucode}" "${INIT}" "elogind-${INIT}" "efibootmgr" "dhcpcd" "dhcpcd-${INIT}" "iwd" "iwd-${INIT}" "nano");
-    
     [[ "${IS_BTRFS}" -eq 0 ]] && pkgs+=( "btrfs-progs" );
-    
     local source_dev;
     read -r source_dev < <(findmnt -no SOURCE /mnt);
     [[ "${source_dev}" == /dev/mapper/* ]] && pkgs+=( "cryptsetup" );
-    
     [[ "${BOOTLOADER}" == "grub" ]] && pkgs+=( "grub" "os-prober" ) || pkgs+=( "refind" );
-
     basestrap /mnt "${pkgs[@]}";
 }
 
@@ -114,6 +117,8 @@ mkinitcpio -P;
 
 if [[ "${BOOTLOADER}" == "grub" ]]; then
     echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub;
+    [[ -n "${uuid}" ]] && echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub;
+    
     cmd="rw ";
     [[ -n "${uuid}" ]] && cmd+="cryptdevice=UUID=${uuid}:${current_mapper:-cryptroot} root=${root_dev} ";
     [[ -n "${subvol_arg}" ]] && cmd+="${subvol_arg} ";
@@ -123,17 +128,22 @@ if [[ "${BOOTLOADER}" == "grub" ]]; then
     grub-mkconfig -o /boot/grub/grub.cfg;
 else
     refind-install;
-    params="rw ";
-    [[ -n "${uuid}" ]] && params+="cryptdevice=UUID=${uuid}:${current_mapper:-cryptroot} root=${root_dev} ";
-    [[ -n "${subvol_arg}" ]] && params+="${subvol_arg} ";
-    printf "\"Boot Artix\" \"%s initrd=/boot/intel-ucode.img initrd=/boot/amd-ucode.img initrd=/boot/initramfs-linux.img\"\n" "\${params}" > /boot/refind_linux.conf;
+    mkdir -p /boot/efi/EFI/refind/drivers_x64;
+    cp /usr/share/refind/drivers_x64/btrfs_x64.efi /boot/efi/EFI/refind/drivers_x64/ 2>/dev/null || true;
+    
+    local r_root; [[ -n "${uuid}" ]] && r_root="${root_dev}" || r_root="UUID=\$(blkid -s UUID -o value ${root_dev})";
+    local pfx=""; [[ "${IS_BTRFS}" -eq 0 ]] && pfx="/@";
+    local params="rw ";
+    [[ -n "${uuid}" ]] && params+="cryptdevice=UUID=${uuid}:${current_mapper:-cryptroot} ";
+    
+    printf "\"Boot Artix\" \"root=\${r_root} \${params} ${subvol_arg} initrd=\${pfx}/boot/intel-ucode.img initrd=\${pfx}/boot/amd-ucode.img initrd=\${pfx}/boot/initramfs-linux.img\"\n" > /boot/refind_linux.conf;
 fi
 
-printf "root:%s" "${ROOTPASS}" | chpasswd;
+printf "root:${ROOTPASS}" | chpasswd;
 case "${INIT}" in
     openrc) rc-update add dhcpcd default; rc-update add iwd default ;;
-    runit)  ln -s /etc/runit/sv/dhcpcd /etc/runit/runsvdir/default/; ln -s /etc/runit/sv/iwd /etc/runit/runsvdir/default/ ;;
-    dinit)  mkdir -p /etc/dinit.d/boot.d; ln -s ../dhcpcd /etc/dinit.d/boot.d/; ln -s ../iwd /etc/dinit.d/boot.d/ ;;
+    runit)  ln -s /etc/runit/sv/dhcpcd /etc/runit/runsvdir/default/ 2>/dev/null || true; ln -s /etc/runit/sv/iwd /etc/runit/runsvdir/default/ 2>/dev/null || true ;;
+    dinit)  mkdir -p /etc/dinit.d/boot.d; ln -s ../dhcpcd /etc/dinit.d/boot.d/ 2>/dev/null || true; ln -s ../iwd /etc/dinit.d/boot.d/ 2>/dev/null || true ;;
 esac
 EOF
 }
@@ -160,7 +170,6 @@ function main {
     _finalize;
     _setup_handoff;
     umount -R /mnt;
-    
     local fs_msg="EXT4"; [[ "${IS_BTRFS}" -eq 0 ]] && fs_msg="BTRFS";
     printf "Manual install complete. %s stack configured.\n" "${fs_msg}";
 }
