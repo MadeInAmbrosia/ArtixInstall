@@ -68,7 +68,7 @@ function _create_user {
     else
         local ush="/bin/bash";
         _ask "Use Zsh instead of Bash?" "n" && { pacman -S --noconfirm zsh; ush="/bin/zsh"; };
-        useradd -m -G wheel,audio,video,storage,input -s "${ush}" "${un}";
+        useradd -m -G wheel,audio,video,storage,input,render -s "${ush}" "${un}";
         passwd "${un}";
     fi
     pacman -S --noconfirm sudo;
@@ -83,7 +83,7 @@ function _install_drivers {
         read -r DRV_CHOICE;
         local pkgs=();
         local gpu_info;
-        read -r gpu_info < <(lspci);
+        gpu_info=$(lspci | grep -iE "vga|3d");
     
         if [[ "${gpu_info,,}" == *nvidia* ]]; then
             [[ "${DRV_CHOICE}" == "2" ]] && pkgs+=( "nvidia-dkms" "nvidia-utils" ) || pkgs+=( "xlibre-video-nouveau" );
@@ -96,7 +96,9 @@ function _install_drivers {
         fi
         
         if [[ "${#pkgs[@]}" -gt 0 ]]; then
-            [[ "${DRV_CHOICE}" != "2" ]] && pacman -Rdd --noconfirm xorg-server 2>/dev/null || true;
+            if [[ "${DRV_CHOICE}" != "2" ]]; then
+                pacman -Rdd --noconfirm xorg-server 2>/dev/null || true;
+            fi
             pacman -S --noconfirm --needed "${pkgs[@]}";
         fi
     fi
@@ -150,9 +152,13 @@ function _setup_desktop {
             _ask "Use SDDM instead of LightDM?" "n" && dm="sddm";
         fi
 
+        local x_ver;
+        x_ver=$(pacman -Si xorg-server 2>/dev/null | grep Version | awk '{print $3}' | cut -d'-' -f1)
+        [[ -z "${x_ver}" ]] && x_ver="21.1.13";
+
         local install_cmd="pacman -S --noconfirm --needed"
         if [[ "${DRV_CHOICE}" != "2" ]]; then
-            install_cmd+=" --assume-installed xorg-server=21.1.8"
+            install_cmd+=" --assume-installed xorg-server=${x_ver}"
         fi
 
         $install_cmd ${pkgs} ${dm} "${dm}-${INIT}";
@@ -189,7 +195,7 @@ function _install_bonus_tools {
         if [[ "${INIT}" == "runit" ]]; then
             if _ask "Install rsvc (SashexSRB)?" "n"; then
                 pacman -S --noconfirm git base-devel;
-                git clone https://github.com /tmp/rsvc && {
+                git clone https://github.com/SashexSRB/rsvc /tmp/rsvc && {
                     pushd /tmp/rsvc >/dev/null && make && make install && popd >/dev/null && rm -rf /tmp/rsvc;
                 };
             fi
