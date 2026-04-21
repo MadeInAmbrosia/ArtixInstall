@@ -9,10 +9,9 @@ REMOVABLE_FLAG="";
 USE_LUKS=1;
 BOOTLOADER="grub";
 MAPPER_NAME="cryptroot";
-FS_TYPE="btrfs"; # BTRFS Set to default as of Major Refractor No.2
+FS_TYPE="btrfs";
 
-SELF_PATH="${BASH_SOURCE}";
-[[ "${SELF_PATH}" != /* ]] && SELF_PATH="${PWD}/${SELF_PATH}";
+SELF_PATH="$(readlink -f "${BASH_SOURCE}")";
 SCRIPT_DIR="${SELF_PATH%/*}";
 
 function _error_exit {
@@ -42,13 +41,13 @@ function _ensure_tools {
 
 function _choose_fs {
     printf "1) BTRFS (Subvolumes)  2) EXT4 (The Classic)\n";
-    printf "Filesystem: "; read -r fc;
+    printf "Filesystem: "; read -r fc </dev/tty;
     [[ "${fc}" == "2" ]] && FS_TYPE="ext4" || FS_TYPE="btrfs";
 }
 
 function _choose_init {
     printf "1) openrc  2) runit  3) dinit  4) s6\n";
-    printf "Init: "; read -r ic;
+    printf "Init: "; read -r ic </dev/tty;
     case "${ic}" in
         1) INIT="openrc" ;;
         2) INIT="runit" ;;
@@ -60,39 +59,30 @@ function _choose_init {
 
 function _choose_bootloader {
     printf "1) GRUB (Standard)  2) rEFInd (Graphical/Auto-detect)\n";
-    printf "Bootloader: "; read -r bc;
+    printf "Bootloader: "; read -r bc </dev/tty;
     [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub";
 }
 
 function _setup_encryption {
-    local enable_luks=1
-    _ask "Enable LUKS Encryption?" "n" && enable_luks=0 || enable_luks=1
+    local enable_luks=1;
+    _ask "Enable LUKS Encryption?" "n" && enable_luks=0 || enable_luks=1;
     if [[ "${enable_luks}" -eq 0 ]]; then
-        USE_LUKS=0
-        exec </dev/tty
-        printf "LUKS Passphrase: "
-        read -rs LUKS_PASS
-        echo
-        printf "Confirm Passphrase: "
-        read -rs LUKS_PASS_CONFIRM
-        echo
-        if [[ "${LUKS_PASS}" != "${LUKS_PASS_CONFIRM}" ]]; then
-            _error_exit "passwords do not match"
-        fi
+        USE_LUKS=0;
+        printf "LUKS Passphrase: "; read -rs LUKS_PASS </dev/tty; echo;
+        printf "Confirm Passphrase: "; read -rs LUKS_PASS_CONFIRM </dev/tty; echo;
+        [[ "${LUKS_PASS}" != "${LUKS_PASS_CONFIRM}" ]] && _error_exit "passwords do not match";
     fi
 }
 
 function _ask_info {
-    lsblk -dpno NAME,SIZE,MODEL | grep -E "/dev/(sd|vd|nvme|mmcblk)" || true
+    lsblk -dpno NAME,SIZE,MODEL | grep -E "/dev/(sd|vd|nvme|mmcblk)" || true;
     printf "Target Disk: "; read -r DISK </dev/tty;
     [[ ! -b "${DISK}" ]] && _error_exit "invalid device";
-    if ! _ask "Destroy all data on ${DISK}?" "n"; then _error_exit "aborted"; fi
+    local confirm_destroy=1;
+    _ask "Destroy all data on ${DISK}?" "n" && confirm_destroy=0 || confirm_destroy=1;
+    [[ "${confirm_destroy}" -ne 0 ]] && _error_exit "aborted";
     printf "Root password: "; read -rs ROOTPASS </dev/tty; echo;
-    if _ask "External/removable drive?" "n"; then
-        REMOVABLE_FLAG="--removable"
-    else
-        REMOVABLE_FLAG=""
-    fi
+    if _ask "External/removable drive?" "n"; then REMOVABLE_FLAG="--removable"; fi
     echo ""
 }
 
@@ -104,11 +94,8 @@ function _partition_storage {
     sgdisk -n 2:0:0           -t 2:8300 "${DISK}";
     
     local efi_p root_p target_dev;
-    if [[ "${DISK}" == *nvme* ]]; then
-        efi_p="${DISK}p1"; root_p="${DISK}p2";
-    else
-        efi_p="${DISK}1"; root_p="${DISK}2";
-    fi
+    efi_p=$(lsblk -np -o NAME "${DISK}" | sed -n '2p');
+    root_p=$(lsblk -np -o NAME "${DISK}" | sed -n '3p');
 
     mkfs.fat -F32 "${efi_p}";
     target_dev="${root_p}";
@@ -127,7 +114,6 @@ function _partition_storage {
         btrfs subvolume create /mnt/@log;
         btrfs subvolume create /mnt/@pkg;
         umount /mnt;
-
         local m_opts="noatime,compress=zstd,ssd,discard=async";
         mount -o "${m_opts},subvol=@" "${target_dev}" /mnt;
         mount --mkdir -o "${m_opts},subvol=@home" "${target_dev}" /mnt/home;
@@ -137,7 +123,6 @@ function _partition_storage {
         mkfs.ext4 -F "${target_dev}";
         mount "${target_dev}" /mnt;
     fi
-    
     mount --mkdir "${efi_p}" /mnt/boot/efi;
 }
 
@@ -145,27 +130,19 @@ function _run_basestrap {
     local ucode="amd-ucode";
     [[ -f /proc/cpuinfo ]] && grep -q "GenuineIntel" /proc/cpuinfo && ucode="intel-ucode";
     local pkgs=("base" "base-devel" "linux" "linux-firmware" "${ucode}" "${INIT}" "elogind-${INIT}" "efibootmgr" "dhcpcd" "dhcpcd-${INIT}" "iwd" "iwd-${INIT}" "nano");
-    
     [[ "${FS_TYPE}" == "btrfs" ]] && pkgs+=("btrfs-progs");
     [[ "${USE_LUKS}" -eq 0 ]] && pkgs+=("cryptsetup");
     [[ "${BOOTLOADER}" == "grub" ]] && pkgs+=("grub" "os-prober") || pkgs+=("refind");
-    
     basestrap /mnt "${pkgs[@]}";
 }
 
 function _finalize {
     local root_part uuid hooks cmdline_opts;
-    if [[ "${DISK}" == *nvme* ]]; then
-        root_part="${DISK}p2";
-    else
-        root_part="${DISK}2";
-    fi
-    
+    root_part=$(lsblk -np -o NAME "${DISK}" | sed -n '3p');
     read -r uuid < <(blkid -s UUID -o value "${root_part}");
-    
     fstabgen -U /mnt >> /mnt/etc/fstab;
     
-    hooks="base udev";
+    hooks="base udev autodetect modconf block";
     [[ "${USE_LUKS}" -eq 0 ]] && hooks+=" encrypt";
     [[ "${FS_TYPE}" == "btrfs" ]] && hooks+=" btrfs";
     hooks+=" filesystems keyboard fsck";
@@ -177,7 +154,6 @@ function _finalize {
     artix-chroot /mnt /bin/bash <<EOF
 sed -i "s/^HOOKS=(.*/HOOKS=(${hooks})/" /etc/mkinitcpio.conf;
 mkinitcpio -P;
-
 if [[ "${BOOTLOADER}" == "grub" ]]; then
     echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub;
     sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"${cmdline_opts} |" /etc/default/grub;
@@ -185,11 +161,18 @@ if [[ "${BOOTLOADER}" == "grub" ]]; then
     grub-mkconfig -o /boot/grub/grub.cfg;
 else
     refind-install;
-    printf "\"Boot Artix\" \"root=UUID=%s %s initrd=/boot/intel-ucode.img initrd=/boot/amd-ucode.img initrd=/boot/initramfs-linux.img\"\n" \
-        "$([[ "${USE_LUKS}" -eq 0 ]] && echo "/dev/mapper/${MAPPER_NAME}" || echo "${uuid}")" \
-        "${cmdline_opts}" > /boot/refind_linux.conf;
+    mkdir -p /boot/efi/EFI/refind/drivers_x64;
+    cp /usr/share/refind/drivers_x64/btrfs_x64.efi /boot/efi/EFI/refind/drivers_x64/ 2>/dev/null || true;
+    local r_root;
+    [[ "${USE_LUKS}" -eq 0 ]] && r_root="/dev/mapper/${MAPPER_NAME}" || r_root="UUID=${uuid}";
+    local r_initrd;
+    if [[ "${FS_TYPE}" == "btrfs" ]]; then
+        r_initrd="initrd=/@/boot/intel-ucode.img initrd=/@/boot/amd-ucode.img initrd=/@/boot/initramfs-linux.img";
+    else
+        r_initrd="initrd=/boot/intel-ucode.img initrd=/boot/amd-ucode.img initrd=/boot/initramfs-linux.img";
+    fi
+    printf "\"Boot Artix\" \"root=%s %s %s\"\n" "\${r_root}" "${cmdline_opts}" "\${r_initrd}" > /boot/refind_linux.conf;
 fi
-
 printf "root:%s" "${ROOTPASS}" | chpasswd;
 case "${INIT}" in
     openrc) rc-update add dhcpcd default; rc-update add iwd default ;;
