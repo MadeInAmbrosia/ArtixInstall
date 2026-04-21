@@ -88,7 +88,12 @@ function _ask_info {
     [[ ! -b "${DISK}" ]] && _error_exit "invalid device";
     if ! _ask "Destroy all data on ${DISK}?" "n"; then _error_exit "aborted"; fi
     printf "Root password: "; read -rs ROOTPASS </dev/tty; echo;
-    _ask "External/removable drive?" "n" && REMOVABLE_FLAG="--removable";
+    if _ask "External/removable drive?" "n"; then
+        REMOVABLE_FLAG="--removable"
+    else
+        REMOVABLE_FLAG=""
+    fi
+    echo ""
 }
 
 function _partition_storage {
