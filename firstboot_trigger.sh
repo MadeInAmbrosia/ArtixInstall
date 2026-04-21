@@ -31,7 +31,6 @@ function main {
     printf "=======================================\n";
     printf "It looks like this is your first boot.\n";
     printf "The system is now ready for final setup.\n";
-    printf "---------------------------------------\n";
     printf "This wizard will help you with:\n";
     printf " - Network connectivity (Wi-Fi)\n";
     printf " - User creation (with your chosen shell)\n";
