@@ -6,6 +6,8 @@ INIT="openrc";
 [[ -d /run/dinit ]] && INIT="dinit";
 [[ -d /run/s6    ]] && INIT="s6";
 
+DRV_CHOICE=1;
+
 function _error_exit {
     local reason="${1}";
     printf "%b%s%b\n" "\e[1;31m" "${reason^}" "\e[m" >&2;
@@ -77,25 +79,24 @@ function _create_user {
 function _install_drivers {
     printf "  Hardware Drivers  \n";
     if _ask "Install hardware drivers?" "y"; then
-        printf "1) Standard X.Org 2) xLibre\nChoice: "; 
-        local drv_pref;
-        read -r drv_pref;
+        printf "1) xLibre (Libre) 2) Standard X.Org\nChoice: "; 
+        read -r DRV_CHOICE;
         local pkgs=();
         local gpu_info;
         read -r gpu_info < <(lspci);
-        
+    
         if [[ "${gpu_info,,}" == *nvidia* ]]; then
-            [[ "${drv_pref}" == "2" ]] && pkgs+=( "xlibre-video-nouveau" ) || pkgs+=( "nvidia-dkms" "nvidia-utils" );
+            [[ "${DRV_CHOICE}" == "2" ]] && pkgs+=( "nvidia-dkms" "nvidia-utils" ) || pkgs+=( "xlibre-video-nouveau" );
         fi
         if [[ "${gpu_info,,}" == *intel* ]]; then
-            [[ "${drv_pref}" == "2" ]] && pkgs+=( "xlibre-video-intel" ) || pkgs+=( "xf86-video-intel" "intel-media-driver" );
+            [[ "${DRV_CHOICE}" == "2" ]] && pkgs+=( "xf86-video-intel" "intel-media-driver" ) || pkgs+=( "xlibre-video-intel" );
         fi
         if [[ "${gpu_info,,}" == *amd* ]]; then
-            [[ "${drv_pref}" == "2" ]] && pkgs+=( "xlibre-video-amdgpu" "vulkan-radeon" ) || pkgs+=( "xf86-video-amdgpu" "vulkan-radeon" );
+            [[ "${DRV_CHOICE}" == "2" ]] && pkgs+=( "xf86-video-amdgpu" "vulkan-radeon" ) || pkgs+=( "xlibre-video-amdgpu" "vulkan-radeon" );
         fi
         
         if [[ "${#pkgs[@]}" -gt 0 ]]; then
-            [[ "${drv_pref}" == "2" ]] && pacman -Rdd --noconfirm xorg-server 2>/dev/null || true;
+            [[ "${DRV_CHOICE}" != "2" ]] && pacman -Rdd --noconfirm xorg-server 2>/dev/null || true;
             pacman -S --noconfirm --needed "${pkgs[@]}";
         fi
     fi
@@ -149,7 +150,12 @@ function _setup_desktop {
             _ask "Use SDDM instead of LightDM?" "n" && dm="sddm";
         fi
 
-        pacman -S --noconfirm ${pkgs} ${dm} "${dm}-${INIT}";
+        local install_cmd="pacman -S --noconfirm --needed"
+        if [[ "${DRV_CHOICE}" != "2" ]]; then
+            install_cmd+=" --assume-installed xorg-server=21.1.8"
+        fi
+
+        $install_cmd ${pkgs} ${dm} "${dm}-${INIT}";
         [[ "${dm}" == "lightdm" ]] && pacman -S --noconfirm lightdm-gtk-greeter;
 
         case "${INIT}" in
