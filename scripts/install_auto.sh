@@ -100,19 +100,22 @@ function _partition_storage {
     sgdisk --zap-all "${DISK}";
     sgdisk -n 1:0:+${EFI_SIZE}M -t 1:ef00 "${DISK}";
     sgdisk -n 2:0:0           -t 2:8300 "${DISK}";
-    
-    printf "[*] Forcing partition table reload...\n";
-    partprobe "${DISK}";
+
+    printf "[*] Refreshing partition table...\n";
+    blockdev --rereadpt "${DISK}" || true;
     udevadm settle;
-    sleep 2; #I don't know anymore.. "This might work" counter: 9
     
     local efi_p root_p target_dev;
-    efi_p=$(lsblk -np -o NAME "${DISK}" | grep -E "${DISK}[p]?1$" | head -n1);
-    root_p=$(lsblk -np -o NAME "${DISK}" | grep -E "${DISK}[p]?2$" | head -n1);
 
-    if [[ -z "${efi_p}" || ! -b "${efi_p}" ]]; then
-        _error_exit "EFI partition (${efi_p}) not found or not a block device!";
+    if [[ "${DISK}" =~ (nvme|mmcblk|loop) ]]; then
+        efi_p="${DISK}p1";
+        root_p="${DISK}p2";
+    else
+        efi_p="${DISK}1";
+        root_p="${DISK}2";
     fi
+
+    [[ ! -b "${efi_p}" ]] && _error_exit "EFI partition (${efi_p}) not found! Kernel lag?";
 
     printf "[*] Formatting EFI: %s\n" "${efi_p}";
     mkfs.fat -F32 "${efi_p}";
