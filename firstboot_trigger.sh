@@ -1,48 +1,52 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail;
 
-# =======================================================
-#   ARTIX POST-INSTALL TRIGGER (profile.d)
-# =======================================================
+function _ask {
+    local question="${1}";
+    local default="${2}";
+    local options response;
+    [[ "${default,,}" == "y" ]] && options="Y/n" || options="y/N";
+    printf -v question "%s [%s]: " "${1}" "${options}";
+    read -r -p "${question}" response </dev/tty;
+    case "${response,,}" in
+        "y"|"yes") return 0 ;;
+        "n"|"no")  return 1 ;;
+        *) [[ "${default,,}" == "y" ]] && return 0 || return 1 ;;
+    esac
+}
 
-if [[ "$EUID" -ne 0 ]]; then
-    return
-fi
+function main {
+    [[ "${EUID}" -ne 0 ]] && return 0;
+    
+    if [[ -f /var/lib/artix-firstboot-done ]]; then
+        rm -f /etc/profile.d/firstboot.sh 2>/dev/null;
+        return 0;
+    fi
 
-if [[ -f /var/lib/artix-firstboot-done ]]; then
-    # Lock exists?
-    rm -f /etc/profile.d/firstboot.sh 2>/dev/null
-    return
-fi
+    [[ ! -f /usr/local/bin/firstboot.sh ]] && return 0;
 
-if [[ ! -f /usr/local/bin/firstboot.sh ]]; then
-    return
-fi
+    clear;
+    printf "=======================================\n";
+    printf "   ARTIX POST-INSTALLATION WIZARD      \n";
+    printf "=======================================\n";
+    printf "It looks like this is your first boot.\n";
+    printf "The system is now ready for final setup.\n";
+    printf "---------------------------------------\n";
+    printf "This wizard will help you with:\n";
+    printf " - Network connectivity (Wi-Fi)\n";
+    printf " - User creation (with your chosen shell)\n";
+    printf " - Graphics and Desktop Environment\n";
+    printf " - Extra tools and drivers\n";
+    printf "=======================================\n\n";
 
-clear
-echo "======================================="
-echo "   ARTIX POST-INSTALLATION WIZARD      "
-echo "======================================="
-echo "It looks like this is your first boot."
-echo "The system is now ready for final setup."
-echo "---------------------------------------"
-echo "This wizard will help you with:"
-echo " - Network connectivity (Wi-Fi)"
-echo " - User creation (with your chosen shell)"
-echo " - Graphics and Desktop Environment"
-echo " - Along with some other extra tools!"
-echo "======================================="
-echo
+    if _ask "Run setup now?" "y"; then
+        printf "[*] Launching firstboot script...\n";
+        exec /usr/local/bin/firstboot.sh;
+    else
+        printf "[*] Skipping setup for now.\n";
+        printf "[*] To prevent this prompt, create /var/lib/artix-firstboot-done\n";
+        printf "    or run the wizard later from /usr/local/bin/firstboot.sh\n";
+    fi
+}
 
-read -rp "Run setup now? [y/N]: " CHOICE
-
-case "$CHOICE" in
-    [yY][eE][sS]|[yY])
-        echo "[*] Launching firstboot script..."
-        /usr/local/bin/firstboot.sh
-        ;;
-    *)
-        echo "[*] Skipping setup for now."
-        echo "[*] To prevent this prompt, create /var/lib/artix-firstboot-done"
-        echo "    or run the wizard later from /usr/local/bin/firstboot.sh"
-        ;;
-esac
+main;

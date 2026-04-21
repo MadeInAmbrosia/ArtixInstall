@@ -1,45 +1,108 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+set -euo pipefail;
 
-# The UNIX philosophy: One tool, one job
-MODE=""
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF_PATH="${BASH_SOURCE[0]}";
+[[ "${SELF_PATH}" != /* ]] && SELF_PATH="${PWD}/${SELF_PATH}";
+SCRIPT_DIR="${SELF_PATH%/*}";
 
-check_root() {
-    if [[ "$EUID" -ne 0 ]]; then
-        echo "[ERROR] This script must be run as root (sudo)."
-        exit 1
-    fi
+MODE="";
+ARGV=();
+
+function _error_exit {
+    local reason="${1}";
+    printf "%b%s%b\n" "\e[1;31m" "${reason^}" "\e[m" >&2;
+    exit 1;
 }
 
-dispatch() {
-    case "$MODE" in
-        auto)
-            [[ -f "$SCRIPT_DIR/scripts/install_auto.sh" ]] || { echo "Auto script missing"; exit 1; }
-            chmod +x "$SCRIPT_DIR/scripts/install_auto.sh"
-            exec "$SCRIPT_DIR/scripts/install_auto.sh"
-            ;;
-        manual)
-            [[ -f "$SCRIPT_DIR/scripts/install_manual.sh" ]] || { echo "Manual script missing"; exit 1; }
-            chmod +x "$SCRIPT_DIR/scripts/install_manual.sh"
-            exec "$SCRIPT_DIR/scripts/install_manual.sh"
-            ;;
-        *)
-            echo "Usage: ./install [-a|--auto] [-m|--manual]"
-            exit 1
-            ;;
-    esac
+function _parse_docblock {
+    local esc;
+    printf -v esc "\033";
+    local help="${1}";
+
+    help="$(sed -nE "/^#\|/,/^$/s/^#\|[[:space:]]?//p" <<< "${help}")";
+    help="$(sed -E "s/^(.*)$/echo \"\1\";/g" <<< "${help}")";
+    help="$(eval "${help}")";
+    help="$(sed -E "s/\{e:([0-9a-zA-Z;]+)\}/${esc}[\1/g" <<< "${help}")";
+
+    printf "%s\n" "${help}";
 }
 
-check_root
+function _extract_docblock {
+    local function_name="${1}";
+    local line docblock="";
+    local -a buffer=();
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -a|--auto)   MODE="auto"; shift ;;
-        -m|--manual) MODE="manual"; shift ;;
-        -h|--help)   echo "Usage: ./install [-a|--auto] [-m|--manual]"; exit 0 ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
+    while IFS= read -r line; do
+        if [[ "${line}" == *"#|"* ]]; then
+            buffer+=( "${line#*#|}" );
+            continue;
+        fi
+        if [[ "${line}" == *"function ${function_name} {"* ]]; then
+            printf -v docblock "%s\n" "${buffer[@]}";
+            break;
+        fi
+        buffer=();
+    done < "${SELF_PATH}";
+
+    [[ -z "${docblock}" ]] && _error_exit "no documentation present for function";
+    _parse_docblock "${docblock}";
+}
+
+function _check_root {
+    [[ "${EUID}" -ne 0 ]] && _error_exit "this script must be run as root (sudo)";
+}
+
+function _parse_flags {
+    local ptr=1;
+    while [[ ${ptr} -le ${#} ]]; do
+        local param="${!ptr}";
+        if [[ "${param}" != "-"* ]]; then
+            ARGV+=( "${param}" );
+            ((ptr++));
+        else
+            case "${param}" in
+                -a|--auto)   MODE="auto" ;;
+                -m|--manual) MODE="manual" ;;
+                -h|--help) 
+                    _extract_docblock "main";
+                    exit 0;
+                    ;;
+                *) _error_exit "unknown option: ${param}" ;;
+            esac
+            
+            if [[ ${ptr} -eq 1 ]]; then 
+                set -- "${@:2}";
+            else 
+                set -- "${@:1:$((ptr - 1))}" "${@:$((ptr + 1))}";
+            fi
+        fi
+    done
+}
+
+function _dispatch {
+    local target_script="";
+    case "${MODE}" in
+        auto)   target_script="${SCRIPT_DIR}/scripts/install_auto.sh" ;;
+        manual) target_script="${SCRIPT_DIR}/scripts/install_manual.sh" ;;
+        *)      _error_exit "no mode selected. Use -a or -m." ;;
     esac
-done
 
-dispatch
+    [[ ! -f "${target_script}" ]] && _error_exit "${MODE} script missing";
+    
+    chmod +x "${target_script}";
+    exec "${target_script}";
+}
+
+#| {e:1;32m}Usage:{e:m} ./install [options]
+#|
+#| {e:1;33m}Options:{e:m}
+#|   -a, --auto      Run automated Artix installation (WARNING: Destructive)
+#|   -m, --manual    Run manual Artix installation
+#|   -h, --help      Show this help message
+function main {
+    _check_root;
+    _parse_flags "${@}";
+    _dispatch;
+}
+
+main "${@}";
