@@ -98,11 +98,15 @@ function _install_drivers {
         if [[ "${#pkgs[@]}" -gt 0 ]]; then
             if [[ "${DRV_CHOICE}" != "2" ]]; then
                 pacman -Rdd --noconfirm xorg-server 2>/dev/null || true;
+                pkgs+=( "xlibre-xserver" );
+            else
+                pkgs+=( "xorg-server" );
             fi
             pacman -S --noconfirm --needed "${pkgs[@]}";
         fi
     fi
 }
+
 
 function _setup_audio {
     printf "  Audio Setup  \n";
