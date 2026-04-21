@@ -67,8 +67,8 @@ function _choose_bootloader {
 function _setup_encryption {
     if _ask "Enable LUKS Encryption?" "n"; then
         USE_LUKS=0;
-        printf "LUKS Passphrase: "; read -rs LUKS_PASS; echo;
-        printf "Confirm Passphrase: "; read -rs LUKS_PASS_CONFIRM; echo;
+        printf "LUKS Passphrase: "; read -rs LUKS_PASS </dev/tty; echo;
+        printf "Confirm Passphrase: "; read -rs LUKS_PASS_CONFIRM </dev/tty; echo;
         [[ "${LUKS_PASS}" != "${LUKS_PASS_CONFIRM}" ]] && _error_exit "passwords do not match";
     fi
 }
