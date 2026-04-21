@@ -96,6 +96,10 @@ function _ask_info {
 function _partition_storage {
     printf "[*] Partitioning storage (%s)...\n" "${FS_TYPE^^}";
 
+    umount -R /mnt 2>/dev/null || true
+    cryptsetup close "${MAPPER_NAME}" 2>/dev/null || true
+    udevadm settle
+
     wipefs -a "${DISK}";
     sgdisk --zap-all "${DISK}";
     sgdisk -n 1:0:+${EFI_SIZE}M -t 1:ef00 "${DISK}";
