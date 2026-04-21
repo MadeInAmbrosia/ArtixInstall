@@ -99,21 +99,30 @@ function _partition_storage {
     sgdisk --zap-all "${DISK}";
     sgdisk -n 1:0:+${EFI_SIZE}M -t 1:ef00 "${DISK}";
     sgdisk -n 2:0:0           -t 2:8300 "${DISK}";
-    
+
+    printf "[*] Syncing partition table...\n";
+    udevadm settle;
+    sync;
     local efi_p root_p target_dev;
     efi_p=$(lsblk -np -o NAME "${DISK}" | sed -n '2p');
     root_p=$(lsblk -np -o NAME "${DISK}" | sed -n '3p');
 
+    [[ -z "${efi_p}" || -z "${root_p}" ]] && _error_exit "Could not detect partitions on ${DISK}";
+
+    printf "[*] Formatting EFI partition: %s\n" "${efi_p}";
     mkfs.fat -F32 "${efi_p}";
+    
     target_dev="${root_p}";
 
     if [[ "${USE_LUKS}" -eq 0 ]]; then
+        printf "[*] Initializing LUKS on %s\n" "${root_p}";
         printf "%s" "${LUKS_PASS}" | cryptsetup luksFormat "${root_p}" -;
         printf "%s" "${LUKS_PASS}" | cryptsetup open "${root_p}" "${MAPPER_NAME}" -;
         target_dev="/dev/mapper/${MAPPER_NAME}";
     fi
 
     if [[ "${FS_TYPE}" == "btrfs" ]]; then
+        printf "[*] Creating BTRFS subvolumes on %s\n" "${target_dev}";
         mkfs.btrfs -f "${target_dev}";
         mount "${target_dev}" /mnt;
         btrfs subvolume create /mnt/@;
@@ -121,15 +130,18 @@ function _partition_storage {
         btrfs subvolume create /mnt/@log;
         btrfs subvolume create /mnt/@pkg;
         umount /mnt;
+
         local m_opts="noatime,compress=zstd,ssd,discard=async";
         mount -o "${m_opts},subvol=@" "${target_dev}" /mnt;
         mount --mkdir -o "${m_opts},subvol=@home" "${target_dev}" /mnt/home;
         mount --mkdir -o "${m_opts},subvol=@log" "${target_dev}" /mnt/var/log;
         mount --mkdir -o "${m_opts},subvol=@pkg" "${target_dev}" /mnt/var/cache/pacman/pkg;
     else
+        printf "[*] Creating EXT4 filesystem on %s\n" "${target_dev}";
         mkfs.ext4 -F "${target_dev}";
         mount "${target_dev}" /mnt;
     fi
+
     mount --mkdir "${efi_p}" /mnt/boot/efi;
 }
 
