@@ -50,15 +50,14 @@ function _choose_init {
 }
 
 function _choose_bootloader {
-    local root_dev;
-    read -r root_dev < <(findmnt -no SOURCE /mnt);
-    if [[ "${root_dev}" == /dev/mapper/* ]]; then
-        printf "[!] LUKS detected: Forcing GRUB.\n";
-        BOOTLOADER="grub";
+    if [[ "${USE_LUKS}" -eq 0 ]]; then
+        printf "[!] LUKS enabled: Forcing GRUB (rEFInd does not support encrypted /boot)\n"
+        BOOTLOADER="grub"
     else
-        printf "1) GRUB (Standard)  2) rEFInd (Graphical)\n";
-        printf "Bootloader: "; read -r bc;
-        [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub";
+        printf "1) GRUB (Standard)  2) rEFInd (Graphical/Auto-detect)\n"
+        printf "Bootloader: "
+        read -r bc
+        [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub"
     fi
 }
 
@@ -162,10 +161,13 @@ function _setup_handoff {
 function main {
     [[ ! -d /sys/firmware/efi ]] && _error_exit "no uefi";
     _verify_mounts;
+    _ensure_tools;
+    _choose_fs;
     _choose_init;
+    _setup_encryption; 
     _choose_bootloader;
     _ask_info;
-    _detect_storage_stack;
+    _partition_storage;
     _run_basestrap;
     _finalize;
     _setup_handoff;
