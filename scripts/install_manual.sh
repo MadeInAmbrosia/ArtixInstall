@@ -8,6 +8,7 @@ BOOTLOADER="grub";
 REMOVABLE_FLAG="";
 MAPPER_NAME="cryptroot";
 IS_BTRFS=1;
+HAS_LUKS=1;
 
 SELF_PATH="$(readlink -f "${BASH_SOURCE}")";
 SCRIPT_DIR="${SELF_PATH%/*}";
@@ -49,43 +50,40 @@ function _choose_init {
     esac
 }
 
-function _choose_bootloader {
-    if [[ "${USE_LUKS}" -eq 0 ]]; then
-        printf "[!] LUKS enabled: Forcing GRUB (rEFInd does not support encrypted /boot)\n"
-        BOOTLOADER="grub"
-    else
-        printf "1) GRUB (Standard)  2) rEFInd (Graphical)\n"
-        printf "Bootloader: "; read -r bc </dev/tty
-        if [[ "${bc}" == "2" ]]; then
-            BOOTLOADER="refind"
-        else
-            BOOTLOADER="grub"
-        fi
-        printf "[*] Selected bootloader: %s\n" "${BOOTLOADER^^}"
-    fi
+function _detect_storage_stack {
+    local root_fs root_dev;
+    read -r root_fs < <(findmnt -no FSTYPE /mnt);
+    [[ "${root_fs}" == "btrfs" ]] && IS_BTRFS=0;
+    
+    read -r root_dev < <(findmnt -no SOURCE /mnt);
+    [[ "${root_dev}" == /dev/mapper/* ]] && HAS_LUKS=0;
 }
 
+function _choose_bootloader {
+    if [[ "${HAS_LUKS}" -eq 0 ]]; then
+        printf "[!] LUKS detected on /mnt: Forcing GRUB.\n";
+        BOOTLOADER="grub";
+    else
+        printf "1) GRUB (Standard)  2) rEFInd (Graphical)\n";
+        printf "Bootloader: "; read -r bc;
+        [[ "${bc}" == "2" ]] && BOOTLOADER="refind" || BOOTLOADER="grub";
+    fi
+}
 
 function _ask_info {
     printf "Root password: "; read -rs ROOTPASS; echo;
     if _ask "Installing to a removable/external drive?" "n"; then REMOVABLE_FLAG="--removable"; fi
 }
 
-function _detect_storage_stack {
-    local root_fs;
-    read -r root_fs < <(findmnt -no FSTYPE /mnt);
-    [[ "${root_fs}" == "btrfs" ]] && IS_BTRFS=0;
-}
-
 function _run_basestrap {
     local ucode="amd-ucode";
     [[ -f /proc/cpuinfo ]] && grep -q "GenuineIntel" /proc/cpuinfo && ucode="intel-ucode";
     local pkgs=("base" "base-devel" "linux" "linux-firmware" "${ucode}" "${INIT}" "elogind-${INIT}" "efibootmgr" "dhcpcd" "dhcpcd-${INIT}" "iwd" "iwd-${INIT}" "nano");
+    
     [[ "${IS_BTRFS}" -eq 0 ]] && pkgs+=( "btrfs-progs" );
-    local source_dev;
-    read -r source_dev < <(findmnt -no SOURCE /mnt);
-    [[ "${source_dev}" == /dev/mapper/* ]] && pkgs+=( "cryptsetup" );
+    [[ "${HAS_LUKS}" -eq 0 ]] && pkgs+=( "cryptsetup" );
     [[ "${BOOTLOADER}" == "grub" ]] && pkgs+=( "grub" "os-prober" ) || pkgs+=( "refind" );
+
     basestrap /mnt "${pkgs[@]}";
 }
 
@@ -102,7 +100,7 @@ function _finalize {
         fi
     fi
 
-    if [[ "${root_dev}" == /dev/mapper/* ]]; then
+    if [[ "${HAS_LUKS}" -eq 0 ]]; then
         current_mapper="${root_dev##*/}";
         read -r real_dev < <(cryptsetup status "${current_mapper}" | awk '/device:/ {print $2}');
         read -r uuid < <(blkid -s UUID -o value "${real_dev}");
@@ -112,7 +110,7 @@ function _finalize {
     
     artix-chroot /mnt /bin/bash <<EOF
 hooks="base udev autodetect modconf block";
-[[ -n "${uuid}" ]] && hooks+=" encrypt";
+[[ "${HAS_LUKS}" -eq 0 ]] && hooks+=" encrypt";
 [[ "${IS_BTRFS}" -eq 0 ]] && hooks+=" btrfs";
 hooks+=" filesystems keyboard fsck";
 
@@ -121,7 +119,7 @@ mkinitcpio -P;
 
 if [[ "${BOOTLOADER}" == "grub" ]]; then
     echo "GRUB_DISABLE_OS_PROBER=false" >> /etc/default/grub;
-    [[ -n "${uuid}" ]] && echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub;
+    [[ "${HAS_LUKS}" -eq 0 ]] && echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub;
     
     cmd="rw ";
     [[ -n "${uuid}" ]] && cmd+="cryptdevice=UUID=${uuid}:${current_mapper:-cryptroot} root=${root_dev} ";
@@ -158,7 +156,7 @@ function _setup_handoff {
         if [[ -f "${p}firstboot.sh" ]]; then
             install -Dm755 "${p}firstboot.sh" /mnt/usr/local/bin/firstboot.sh;
             install -Dm755 "${p}firstboot_trigger.sh" /mnt/etc/profile.d/firstboot.sh;
-            return 0;
+            break;
         fi
     done
 }
@@ -166,13 +164,10 @@ function _setup_handoff {
 function main {
     [[ ! -d /sys/firmware/efi ]] && _error_exit "no uefi";
     _verify_mounts;
-    _ensure_tools;
-    _choose_fs;
     _choose_init;
-    _setup_encryption;
+    _detect_storage_stack;
     _choose_bootloader;
     _ask_info;
-    _partition_storage;
     _run_basestrap;
     _finalize;
     _setup_handoff;

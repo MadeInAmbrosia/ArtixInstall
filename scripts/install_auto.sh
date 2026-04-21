@@ -62,17 +62,10 @@ function _setup_encryption {
     local enable_luks=1;
     _ask "Enable LUKS Encryption?" "n" && enable_luks=0 || enable_luks=1;
     if [[ "${enable_luks}" -eq 0 ]]; then
-        USE_LUKS=0
-        exec </dev/tty
-        printf "LUKS Passphrase: "
-        read -rs LUKS_PASS
-        echo
-        printf "Confirm Passphrase: "
-        read -rs LUKS_PASS_CONFIRM
-        echo
-        if [[ "${LUKS_PASS}" != "${LUKS_PASS_CONFIRM}" ]]; then
-            _error_exit "passwords do not match"
-        fi
+        USE_LUKS=0;
+        printf "LUKS Passphrase: "; read -rs LUKS_PASS; echo;
+        printf "Confirm Passphrase: "; read -rs LUKS_PASS_CONFIRM; echo;
+        [[ "${LUKS_PASS}" != "${LUKS_PASS_CONFIRM}" ]] && _error_exit "passwords do not match";
     fi
 }
 
@@ -160,9 +153,7 @@ function _run_basestrap {
 function _finalize {
     local root_part uuid hooks cmdline_opts;
     if [[ "${DISK}" =~ (nvme|mmcblk|loop) ]]; then root_part="${DISK}p2"; else root_part="${DISK}2"; fi
-    uuid=$(blkid -s UUID -o value "${root_part}") || _error_exit "Could not get UUID for ${root_part}";
-    
-    printf "[*] Generating fstab...\n";
+    uuid=$(blkid -s UUID -o value "${root_part}") || _error_exit "UUID fail";
     fstabgen -U /mnt >> /mnt/etc/fstab;
     
     hooks="base udev autodetect modconf block";
@@ -174,7 +165,6 @@ function _finalize {
     [[ "${FS_TYPE}" == "btrfs" ]] && cmdline_opts+=" rootflags=subvol=@";
     [[ "${USE_LUKS}" -eq 0 ]] && cmdline_opts="cryptdevice=UUID=${uuid}:${MAPPER_NAME} root=/dev/mapper/${MAPPER_NAME} ${cmdline_opts}";
 
-    printf "[*] Entering chroot for final configuration...\n";
     artix-chroot /mnt /bin/bash <<EOF
 sed -i "s/^HOOKS=(.*/HOOKS=(${hooks})/" /etc/mkinitcpio.conf;
 mkinitcpio -P;
@@ -188,11 +178,15 @@ else
     refind-install;
     mkdir -p /boot/efi/EFI/refind/drivers_x64;
     cp /usr/share/refind/drivers_x64/btrfs_x64.efi /boot/efi/EFI/refind/drivers_x64/ 2>/dev/null || true;
+    
     local r_root; [[ "${USE_LUKS}" -eq 0 ]] && r_root="/dev/mapper/${MAPPER_NAME}" || r_root="UUID=${uuid}";
     local pfx=""; [[ "${FS_TYPE}" == "btrfs" ]] && pfx="/@";
+    
     printf "\"Boot Artix\" \"root=\${r_root} ${cmdline_opts} initrd=\${pfx}/boot/intel-ucode.img initrd=\${pfx}/boot/amd-ucode.img initrd=\${pfx}/boot/initramfs-linux.img\"\n" > /boot/refind_linux.conf;
 fi
+
 printf "root:${ROOTPASS}" | chpasswd;
+
 case "${INIT}" in
     openrc) rc-update add dhcpcd default; rc-update add iwd default ;;
     runit)  ln -s /etc/runit/sv/dhcpcd /etc/runit/runsvdir/default/ 2>/dev/null || true; ln -s /etc/runit/sv/iwd /etc/runit/runsvdir/default/ 2>/dev/null || true ;;
@@ -217,8 +211,8 @@ function main {
     _ensure_tools;
     _choose_fs;
     _choose_init;
-    _choose_bootloader;
     _setup_encryption;
+    _choose_bootloader;
     _ask_info;
     _partition_storage;
     _run_basestrap;
