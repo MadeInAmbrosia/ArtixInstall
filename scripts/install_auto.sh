@@ -95,23 +95,27 @@ function _ask_info {
 
 function _partition_storage {
     printf "[*] Partitioning storage (%s)...\n" "${FS_TYPE^^}";
+
     wipefs -a "${DISK}";
     sgdisk --zap-all "${DISK}";
     sgdisk -n 1:0:+${EFI_SIZE}M -t 1:ef00 "${DISK}";
     sgdisk -n 2:0:0           -t 2:8300 "${DISK}";
-
-    printf "[*] Syncing partition table...\n";
-    udevadm settle;
-    sync;
-    local efi_p root_p target_dev;
-    efi_p=$(lsblk -np -o NAME "${DISK}" | sed -n '2p');
-    root_p=$(lsblk -np -o NAME "${DISK}" | sed -n '3p');
-
-    [[ -z "${efi_p}" || -z "${root_p}" ]] && _error_exit "Could not detect partitions on ${DISK}";
-
-    printf "[*] Formatting EFI partition: %s\n" "${efi_p}";
-    mkfs.fat -F32 "${efi_p}";
     
+    printf "[*] Forcing partition table reload...\n";
+    partprobe "${DISK}";
+    udevadm settle;
+    sleep 2; #I don't know anymore.. "This might work" counter: 9
+    
+    local efi_p root_p target_dev;
+    efi_p=$(lsblk -np -o NAME "${DISK}" | grep -E "${DISK}[p]?1$" | head -n1);
+    root_p=$(lsblk -np -o NAME "${DISK}" | grep -E "${DISK}[p]?2$" | head -n1);
+
+    if [[ -z "${efi_p}" || ! -b "${efi_p}" ]]; then
+        _error_exit "EFI partition (${efi_p}) not found or not a block device!";
+    fi
+
+    printf "[*] Formatting EFI: %s\n" "${efi_p}";
+    mkfs.fat -F32 "${efi_p}";
     target_dev="${root_p}";
 
     if [[ "${USE_LUKS}" -eq 0 ]]; then
