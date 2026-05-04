@@ -4,7 +4,7 @@ Artix Linux installation script. Intended for anyone willing to try out Artix wi
 
 Fork of [SashexSRB/ArtixInstall](https://github.com/SashexSRB/ArtixInstall).
 
-**More complete + TUI version at [MadeInAmbrosia/ArtixTUI](https://github.com/MadeInAmbrosia/ArtixTUI).**
+**More complete + TUI version at [realvolk/ArtixTUI](https://github.com/realvolk/ArtixTUI).**
 ## Overview
 
 This script automates Artix Linux installation while adhering to UNIX philosophy principles: modularity, plain text interfaces, and small focused tools that pipe together.
@@ -100,5 +100,5 @@ Any bugs should be reported either here on Github or via contacting *volk.v* on 
 ## Credits
 
 #### Original: [SashexSRB](https://github.com/SashexSRB)
-#### Current maintainer: [MadeInAmbrosia](https://github.com/MadeInAmbrosia)
+#### Current maintainer: [realvolk](https://github.com/realvolk)
 
